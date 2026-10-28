@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulador Efecto Oersted</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background-color: #0f172a; color: white; font-family: system-ui, -apple-system, sans-serif; }
+  </style>
+</head>
+<body class="h-screen w-screen flex flex-col justify-between p-4 overflow-hidden">
+
+  <header class="flex justify-between items-center bg-slate-800/80 p-4 rounded-xl border border-slate-700">
+    <div>
+      <h1 class="text-xl font-bold text-amber-400">🧩 Efecto Oersted (1.° Bachillerato)</h1>
+      <p class="text-xs text-slate-300">Vista desde arriba. Conductor largo y recto en dirección Norte–Sur, a 2 cm de la aguja. Campo terrestre horizontal: 20 µT (valor ilustrativo).</p>
+    </div>
+    <div id="status-badge" class="px-3 py-1 text-xs font-semibold rounded-full bg-red-500/20 text-red-300 border border-red-500/30">
+      Circuito abierto (I = 0 A)
+    </div>
+  </header>
+
+  <main class="flex-1 my-4 relative bg-slate-900 rounded-xl border border-slate-800 overflow-hidden flex items-center justify-center">
+    <canvas id="simCanvas" class="w-full h-full"></canvas>
+  </main>
+
+  <footer class="bg-slate-800/80 p-4 rounded-xl border border-slate-700 grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+
+    <div>
+      <button id="btn-switch" onclick="toggleCircuit()" class="w-full py-2.5 px-4 rounded-lg font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white transition-all">
+        ⚡ ENCENDER CIRCUITO
+      </button>
+    </div>
+
+    <div>
+      <label class="text-xs text-slate-400 block mb-1">Sentido convencional de la corriente:</label>
+      <button id="btn-polarity" onclick="togglePolarity()" class="w-full py-2 px-3 rounded bg-slate-700 hover:bg-slate-600 text-xs text-amber-300 border border-slate-600 font-semibold">
+        ↔️ SUR → NORTE
+      </button>
+    </div>
+
+    <div>
+      <label class="text-xs text-slate-400 block mb-1">Ubicación del conductor respecto de la aguja:</label>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="btn-over" onclick="setWirePosition('over')" class="py-1.5 text-xs font-bold rounded bg-amber-500 text-slate-950 border border-amber-400">
+          POR ENCIMA
+        </button>
+        <button id="btn-under" onclick="setWirePosition('under')" class="py-1.5 text-xs font-bold rounded bg-slate-700 text-slate-400 border border-slate-600 hover:bg-slate-600">
+          POR DEBAJO
+        </button>
+      </div>
+    </div>
+
+    <div>
+      <div class="flex justify-between text-xs mb-1">
+        <span class="text-slate-400">Intensidad de corriente (I):</span>
+        <span id="current-val" class="font-bold text-amber-400">2.0 A</span>
+      </div>
+      <input type="range" id="slider-current" min="0.5" max="5.0" step="0.5" value="2.0" oninput="updateCurrent(this.value)" class="w-full accent-amber-500 cursor-pointer">
+      <label class="flex items-center gap-2 text-xs text-slate-300 mt-2 cursor-pointer">
+        <input type="checkbox" id="chk-vectors" checked onchange="state.showVec = this.checked" class="accent-amber-500">
+        Mostrar vectores de campo
+      </label>
+    </div>
+
+  </footer>
+
+  <script>
+    // ---------- ESTADO ----------
+    const B_EARTH = 20.0;   // µT, componente horizontal del campo terrestre
+    const DIST = 0.02;      // m, distancia cable-aguja
+    const K = 30;           // rigidez del "resorte" magnético (oscilador)
+    const C = 3.5;          // amortiguamiento (subamortiguado: la aguja oscila y se frena)
+
+    const state = {
+      closed: false,
+      polarity: 1,          // 1: Sur→Norte, -1: Norte→Sur
+      wirePos: 'over',
+      current: 2.0,
+      angle: 0,             // rad, positivo = polo norte hacia el Este (sentido horario en pantalla)
+      omega: 0,
+      showVec: true
+    };
+
+    const canvas = document.getElementById('simCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    // ---------- FÍSICA ----------
+    // Campo del cable en µT (módulo)
+    function cableField() {
+      return state.closed ? (2e-7 * state.current / DIST) * 1e6 : 0;
+    }
+    // Componente Este (+) / Oeste (-) del campo del cable sobre la aguja.
+    // Regla de la mano derecha: cable por encima + corriente S→N  =>  B hacia el Oeste.
+    function cableFieldEast() {
+      const side = state.polarity * (state.wirePos === 'over' ? 1 : -1);
+      return -side * cableField();
+    }
+    // Ángulo de equilibrio: la aguja se alinea con la resultante (ley de la tangente)
+    function equilibriumAngle() {
+      return Math.atan2(cableFieldEast(), B_EARTH);
+    }
+
+    // ---------- DIBUJO ----------
+    function arrow(x0, y0, x1, y1, color, label) {
+      const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy);
+      if (L < 3) return;
+      const a = Math.atan2(dy, dx);
+      ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - 11 * Math.cos(a - 0.4), y1 - 11 * Math.sin(a - 0.4));
+      ctx.lineTo(x1 - 11 * Math.cos(a + 0.4), y1 - 11 * Math.sin(a + 0.4));
+      ctx.closePath(); ctx.fill();
+      if (label) {
+        ctx.font = 'bold 13px system-ui';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(label, x1 + (dx / L) * 26, y1 + (dy / L) * 14);
+      }
+    }
+
+    function drawWire(cx, h) {
+      ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
+      ctx.strokeStyle = '#d97706'; ctx.lineWidth = 10; ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
+      ctx.strokeStyle = '#f59e0b'; ctx.lineWidth = 4; ctx.stroke();
+    }
+
+    function drawCurrentArrows(cx, cy, r) {
+      const up = state.polarity === 1;
+      ctx.fillStyle = '#facc15';
+      [cy - r - 45, cy + r + 45].forEach(y => {
+        ctx.save();
+        ctx.translate(cx, y);
+        if (!up) ctx.rotate(Math.PI);
+        ctx.beginPath();
+        ctx.moveTo(0, -12); ctx.lineTo(-9, 9); ctx.lineTo(9, 9);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      });
+      ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText('I', cx + 16, cy - r - 45);
+    }
+
+    function drawVectors(cx, cy, r) {
+      const s = (r * 1.2) / 100;           // px por µT
+      const bT = B_EARTH * s;
+      const bC = cableFieldEast() * s;     // + Este (derecha), - Oeste (izquierda)
+
+      if (state.closed && Math.abs(bC) > 1) {
+        ctx.setLineDash([6, 5]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+        ctx.beginPath(); ctx.moveTo(cx + bC, cy); ctx.lineTo(cx + bC, cy - bT); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx, cy - bT); ctx.lineTo(cx + bC, cy - bT); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      arrow(cx, cy, cx, cy - bT, '#34d399', 'B Tierra');
+      if (state.closed && Math.abs(bC) > 1) {
+        arrow(cx, cy, cx + bC, cy, '#22d3ee', 'B cable');
+        arrow(cx, cy, cx + bC, cy - bT, '#f472b6', 'B total');
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const cx = canvas.width / 2, cy = canvas.height / 2;
+      const r = Math.min(canvas.width, canvas.height) * 0.25;
+
+      // Cable por debajo: se dibuja antes y la brújula (semitransparente) queda encima
+      if (state.wirePos === 'under') drawWire(cx, canvas.height);
+
+      // Carátula
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = state.wirePos === 'under' ? 'rgba(30,41,59,0.88)' : '#1e293b';
+      ctx.fill(); ctx.strokeStyle = '#475569'; ctx.lineWidth = 4; ctx.stroke();
+
+      ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ef4444'; ctx.fillText('N', cx, cy - r + 20);
+      ctx.fillStyle = '#94a3b8'; ctx.fillText('S', cx, cy + r - 20);
+      ctx.fillText('E', cx + r - 20, cy);
+      ctx.fillText('O', cx - r + 20, cy);
+
+      // Aguja
+      ctx.save();
+      ctx.translate(cx, cy); ctx.rotate(state.angle);
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-12, 0); ctx.lineTo(0, -r * 0.8); ctx.lineTo(12, 0);
+      ctx.fillStyle = '#ef4444'; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(-12, 0); ctx.lineTo(0, r * 0.8); ctx.lineTo(12, 0);
+      ctx.fillStyle = '#3b82f6'; ctx.fill();
+      ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2); ctx.fillStyle = '#ffffff'; ctx.fill();
+      ctx.restore();
+
+      // Cable por encima: sobre la aguja
+      if (state.wirePos === 'over') drawWire(cx, canvas.height);
+
+      if (state.closed) drawCurrentArrows(cx, cy, r);
+      if (state.showVec) drawVectors(cx, cy, r);
+
+      // Lectura de datos
+      const alpha = Math.abs(equilibriumAngle()) * 180 / Math.PI;
+      ctx.font = '14px system-ui'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(`B Tierra = ${B_EARTH.toFixed(0)} µT`, 16, 14);
+      ctx.fillText(`B cable = ${cableField().toFixed(1)} µT`, 16, 34);
+      ctx.fillText(`Desviación en equilibrio: ${alpha.toFixed(1)}°`, 16, 54);
+      const eq = cableFieldEast();
+      if (state.closed && Math.abs(eq) > 0.01) {
+        ctx.fillText(`El polo norte se desvía hacia el ${eq > 0 ? 'Este' : 'Oeste'}`, 16, 74);
+      }
+    }
+
+    // ---------- ANIMACIÓN: oscilador amortiguado ----------
+    let last = performance.now();
+    function animate(t) {
+      const dt = Math.min((t - last) / 1000, 0.05);
+      last = t;
+      const eq = equilibriumAngle();
+      const acc = -K * (state.angle - eq) - C * state.omega;
+      state.omega += acc * dt;
+      state.angle += state.omega * dt;
+      draw();
+      requestAnimationFrame(animate);
+    }
+
+    // ---------- CONTROLES ----------
+    function refreshBadge() {
+      const badge = document.getElementById('status-badge');
+      if (state.closed) {
+        badge.innerText = `Circuito cerrado (I = ${state.current.toFixed(1)} A)`;
+        badge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+      } else {
+        badge.innerText = 'Circuito abierto (I = 0 A)';
+        badge.className = 'px-3 py-1 text-xs font-semibold rounded-full bg-red-500/20 text-red-300 border border-red-500/30';
+      }
+    }
+
+    function toggleCircuit() {
+      state.closed = !state.closed;
+      const btn = document.getElementById('btn-switch');
+      if (state.closed) {
+        btn.innerText = '🔴 ABRIR CIRCUITO';
+        btn.className = 'w-full py-2.5 px-4 rounded-lg font-bold text-sm bg-red-600 hover:bg-red-500 text-white transition-all';
+      } else {
+        btn.innerText = '⚡ ENCENDER CIRCUITO';
+        btn.className = 'w-full py-2.5 px-4 rounded-lg font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white transition-all';
+      }
+      refreshBadge();
+    }
+
+    function togglePolarity() {
+      state.polarity *= -1;
+      document.getElementById('btn-polarity').innerText =
+        state.polarity === 1 ? '↔️ SUR → NORTE' : '↔️ NORTE → SUR';
+    }
+
+    function setWirePosition(pos) {
+      state.wirePos = pos;
+      const on = 'py-1.5 text-xs font-bold rounded bg-amber-500 text-slate-950 border border-amber-400';
+      const off = 'py-1.5 text-xs font-bold rounded bg-slate-700 text-slate-400 border border-slate-600 hover:bg-slate-600';
+      document.getElementById('btn-over').className = pos === 'over' ? on : off;
+      document.getElementById('btn-under').className = pos === 'under' ? on : off;
+    }
+
+    function updateCurrent(val) {
+      state.current = parseFloat(val);
+      document.getElementById('current-val').innerText = `${state.current.toFixed(1)} A`;
+      refreshBadge();
+    }
+
+    resizeCanvas();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
